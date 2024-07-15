@@ -6,13 +6,14 @@
 # Date: 30th May, 2024
 #------------------------------------
 #------------------------------------
+
 # Import necessary packages
 library(readr)
 library(mixOmics) 
 
 # Read your files for the two-omics analysis
 bolomics <- read_tsv("C:/Users/nelly/Desktop/Skola/Masterprojekt/Results/Autoscaled_Data_OG/autoscaled_c18_pos_var0.025.tsv")
-genomics <- read_tsv("C:/Users/nelly/Desktop/Skola/Masterprojekt/metagenome/clr_data_fixed_for_DIABLO_specific_pathways.tsv")
+genomics <- read_tsv("C:/Users/nelly/Desktop/Skola/Masterprojekt/metagenome/clr_data_fixed_for_DIABLO_CORRECT.tsv")
 
 # For reproducibility
 set.seed(123) 
@@ -20,14 +21,17 @@ set.seed(123)
 # ------------------------------------
 # PRE-PROCESSING
 # ------------------------------------
-genomics <- genomics[order(genomics$Label), ]
 
+# Reorder genomics data after "Label"
+genomics <- genomics[order(genomics$Label), ]
 # Remove the unnecessary column (CeGat.ID)
 genomics <- genomics[, -c(3)]
+
 # ---------------------------------------------------
 # Choose subdata here!
 # ---------------------------------------------------
-# Bolomics
+
+# BOLOMICS
 # C18 Neg
 # early (1:52), late (53:97), early_w/o_ctrl (15:52), late_w/o (66:97)
 
@@ -39,18 +43,21 @@ genomics <- genomics[, -c(3)]
 
 # Hilic Neg
 # early (1:50), late (51:95), early_w/o_ctrl (14:50), late_w/o (65:95)
-
-# Genomics
+# ---
+# GENOMICS
 # early (1:45), late (46:91), early_w/o (14:45), late_w/o (60:91)
+
 # ---------------------------------------------------
 X2 <- bolomics[15:39,]
-X1 <- genomics[17:59,]  
+X1 <- genomics[14:45,]  
 
 X <- list(metagenomics = X1, metabolomics = X2)
 
-# Check the dimensions of your data
+# Check dimensions of the data
 lapply(X, dim) 
+
 #----------------------------------------------------
+
 # Run PCA for Metabolomics
 pca.metabolomics <- pca(X2[,-c(1,2)], ncomp = 2)
 # Run PCA for Metagenomics
@@ -84,6 +91,7 @@ plotIndiv(pca.metagenomics,
           legend = TRUE)
 
 # -----------------------------------------------
+
 # Check for different number of rows in the two data sets
 sapply(X, nrow)
 
@@ -102,7 +110,7 @@ X_aligned <- lapply(X, function(df) {
 
 # Save the aligned sample id's from the two blocks
 aligned_sample_ids <- X_aligned[[1]]$sample.id
-# --------------------------------------------
+
 # Create a response vector that matches 
 Y_aligned <- as.factor(X_aligned$metabolomics$Label)
 summary(Y_aligned)
@@ -121,15 +129,16 @@ if(any(sapply(X_aligned_numeric, nrow) != length(Y_aligned))) {
 #         INITIAL ANALYSIS
 #      Pairwise PLS Comparison
 # -----------------------------------------------
+
 # Select arbitrary values of features to keep
 list.keepX = c(10, 80) 
 list.keepY = c(10, 80)
 
-# For X dataset
+# Double-check for no zero-variance metabolites for X dataset
 constant_vars_X <- apply(X_aligned_numeric[["metabolomics"]], 2, var) == 0
 X_filtered <- X_aligned_numeric[["metabolomics"]][, !constant_vars_X]
 
-# For Y dataset
+# Double-check for no zero-variance metabolites for Y dataset
 constant_vars_Y <- apply(X_aligned_numeric[["metagenomics"]], 2, var) == 0
 Y_filtered <- X_aligned_numeric[["metagenomics"]][, !constant_vars_Y]
 
@@ -146,7 +155,7 @@ plotVar(pls, cutoff = 0.5, title = "bolomics vs genomics",
         col = c('darkorchid', 'lightgreen'))
 
 # Calculate correlation of bolomics and genomics
-cor <- cor(pls$variates$X, pls$variates$Y)  # Gör detta till en variabel
+cor <- cor(pls$variates$X, pls$variates$Y)
 
 # Create a square matrix filled with the correlation value
 design = matrix(cor[1,1], ncol = length(set_filtered), nrow = length(set_filtered), 
@@ -169,8 +178,10 @@ basic.diablo.model = block.splsda(X = set_filtered,
                                   Y = Y_aligned, ncomp = 6, 
                                   design = design)
 
-
+# -----------------------------------------------------
 # Scatterplot of explained variance of each component
+# -----------------------------------------------------
+
 # Extract the values
 y_values <- basic.diablo.model[["prop_expl_var"]][["metabolomics"]]
 
@@ -184,9 +195,10 @@ plot(x_values, y_values,
      main = "Explained Variance by components in Metabolomics",
      pch = 19, col = "blue")
 
-# --------------------------------------
+# ----------------------------------------------------
 # Tuning the number of components
-# --------------------------------------
+# ----------------------------------------------------
+
 set.seed(55)
 
 # run component number tuning with repeated CV
@@ -197,26 +209,30 @@ plot(perf.diablo, col = c("red4", "hotpink", "purple"))
 
 # Show the optimal choice for ncomp for each dist metric
 perf.diablo$choice.ncomp$WeightedVote 
-
 perf.diablo$WeightedVote.error.rate
-# -------------------------------------
+
+# --------------------------------------------------
 # Tuning the number of features
-# -------------------------------------
+# This section is manually rerun until both "ncomp" 
+# and "test.keepX" are optimized (as low but as accurate 
+# as possible)
+# --------------------------------------------------
 
 # Set grid of values for each component to test
-test.keepX = list (metabolomics = seq(1, 150, by = 3), 
-                   metagenomics = seq(1, 200, by = 3))
+test.keepX = list (metabolomics = seq(1, 150, by = 20), 
+                   metagenomics = seq(1, 200, by = 20))
 
-
+# For paralellization
 BPPARAM <- BiocParallel::SnowParam(workers = parallel::detectCores()-1)
 
+# For reproducibility
 set.seed(97)
 
 # Run the feature selection tuning
 tune.EPI = tune.block.splsda(X = set_filtered, Y = Y_aligned, ncomp = 4, 
                               test.keepX = test.keepX, design = design,
                               validation = 'Mfold', folds = 3, nrepeat = 10,
-                              dist = "centroids.dist", BPPARAM = BPPARAM)
+                              dist = "max.dist", BPPARAM = BPPARAM)
 
 # Analyse error-rates to find optimal number of features to keep
 error = tune.EPI$error.rate
@@ -225,23 +241,24 @@ error = tune.EPI$error.rate
 list.keepX = tune.EPI$choice.keepX 
 list.keepX
 
-
-# -------------------------------
+# ------------------------------------------------
 # FINAL MODEL
-# -------------------------------
+# ------------------------------------------------
 
-# Form the optimized DIABLO model
-final.diablo.model = block.splsda(X = set_filtered, Y = Y_aligned, ncomp = 2, 
+# Form optimized DIABLO model
+final.diablo.model = block.splsda(X = set_filtered, Y = Y_aligned, ncomp = 4, 
                                   keepX = list.keepX, design = design)
 
-# Design matrix for the final model
+# Check design matrix for final model
 final.diablo.model$design 
 
-# ------------------------------------
+# ------------------------------------------------
 # PERFORMANCE OF THE FINAL MODEL
-# ------------------------------------
+# ------------------------------------------------
 
+# For reproducibility
 set.seed(65)
+
 # run component number tuning with repeated CV
 perf.diablo.tuned = perf(final.diablo.model, validation = 'loo', 
                          nrepeat = 10) 
@@ -255,9 +272,9 @@ perf.diablo.tuned$choice.ncomp$WeightedVote
 #perf.diablo.tuned$MajorityVote.error.rate
 perf.diablo.tuned$WeightedVote.error.rate
 
-# ------------------------------------
-# PLOTS 
-# ------------------------------------
+# ----------------------------------------------
+# GENERAL PLOTS 
+# ----------------------------------------------
 
 plotDiablo(final.diablo.model, ncomp = 2, col = c("orange", "red4"))
 
@@ -267,22 +284,25 @@ plotIndiv(final.diablo.model, ind.names = FALSE, legend = TRUE,
 plotArrow(final.diablo.model, ind.names = FALSE, legend = TRUE, 
           title = 'Arrow plot')
 
-# -------------------------
+# ---------------------------------------------
 # VARIABLE PLOTS
-# -------------------------
+# ---------------------------------------------
+
 plotVar(final.diablo.model, var.names = FALSE, 
         style = 'graphics', legend = TRUE,
         pch = c(16, 17), cex = c(2,2), 
         col = c('darkorchid', 'lightgreen'))
 
-circosPlot(final.diablo.model, comp = 1, cutoff = 0.85, line = TRUE, 
+circosPlot(final.diablo.model, comp = 1:2, cutoff = 0.8, line = TRUE, 
            color.blocks= c('yellow', 'red4'), 
            color.cor = c("hotpink", "purple3"), linkWidth = c(1,3),
            size.labels = 1.0, 
            size.variables = 0.7)
-# ---------------------------
-# Key Feature Plot
-# ---------------------------
+
+# -------------------------------------------
+# KEY FEATURE PLOT
+# -------------------------------------------
+
 plotLoadings(final.diablo.model, comp = 1, contrib = 'max', 
              method = 'median', legend.color = c("hotpink", "purple3"))
 
